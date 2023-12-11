@@ -1,0 +1,159 @@
+---
+title: "NYPD Shooting Incident"
+author: "K. K."
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(knitr)
+```
+
+## Load in data and select subset
+The data collected by the NYPD on shooting incidents in New York City between 2006 and 2022 is first downloaded into R. A subset of the columns are selected for further investigation and renamed for easier reference in the code. The date is also converted into a date object from a string for better handling.
+
+``` {r import_and_tidy}
+# load data from online
+shoot_inci = read_csv('https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD')
+
+# choosing columns of personal interest 
+shoot_inci = select(shoot_inci, 
+                    c(OCCUR_DATE,OCCUR_TIME,BORO,)) %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE)) %>%
+  # change column titles to be easier to type
+  rename(date = OCCUR_DATE, 
+         time = OCCUR_TIME,
+         boro = BORO)
+
+print(shoot_inci)
+```
+
+## Analyze data
+
+After browsing the data I began to wonder what the relationship is between the number of shooting incidents and the time of day. To investigate this, first the time is converted into a lubridate object. This allows dividing the incidents into 24 groups by the hour of the day. The count function was then used to determine the number of incidents that occurred during each hour within each borough. 
+``` {r exploring_data}
+
+# is there a difference in number of incidents at different times of day?
+inci_by_hour = shoot_inci %>%
+  #group by hour of the day 
+  mutate(hour = lubridate::hour(time) %% 24) %>% 
+  group_by(boro, hour) %>%
+  summarize(count = n()) %>%
+  ungroup()
+print(inci_by_hour)
+```
+
+
+## Visualize analysis
+The best way to get a quick idea of a relationship is to make a graph.
+``` {r graphing}
+
+# number of incidents in each borough by hour of the day
+ggplot(inci_by_hour, aes(x=hour,y=count, color=boro)) +
+  geom_point()
+```
+The incidents graphed against hour of the day suggests a parabolic relationship.
+
+## Model incidents by hour for each borough
+
+We can check how parabolic the relationship is by building quadratic models for each borough.   
+``` {r model}
+inci_by_hour = inci_by_hour %>%
+  #get hour^2 for quadratic model
+  mutate(hour2 = hour^2)
+boros = c("BRONX", "BROOKLYN", "MANHATTAN", "QUEENS", "STATEN ISLAND")
+preds = data.frame(matrix(ncol = 5, nrow = 24))
+r2 = c(0,0,0,0,0)
+names(preds) = boros
+for (i in 1:5)  {
+data = inci_by_hour[inci_by_hour$boro == boros[i],]
+quad_mod = lm(count ~ hour + 
+                hour2, data=data)
+preds[,i] = predict(quad_mod, inci_by_hour[inci_by_hour$boro==boros[i],])
+r2[i] = summary(quad_mod)$r.squared
+}
+
+preds$hour = c(0:23)
+preds = preds %>%
+  pivot_longer(!hour, names_to = "boro", values_to = "pred")
+
+# replot incident timing data with model overlay
+ggplot(inci_by_hour, aes(x=hour,y=count, color=boro)) +
+  geom_point() +
+  geom_line(preds, mapping = aes(x = hour, y = pred, color = boro ))
+
+```
+The number of incidents seems to vary quadratically within each borough, with different coeffecients and degree of difference for each borough. 
+
+``` {r r2 table, echo = FALSE}
+kable(data.frame(boros,r2), digits = 3)
+```
+
+## Digging Deeper
+
+
+While it appears from this analysis that certain boroughs have more shooting incidents, there are also different population sizes in each borough. To see how the per capita shooting numbers looked I found historical population data for the boroughs on the NYC OpenData site. 
+
+The population data is reported for every ten years in absolute number and as a percent of the total population of NYC. For simplicity in the per capita anaylsis, I will use the average of the values from 2000, 2010, and 2020. The change in each borough is low enough that this isa reasonable approximation.
+
+``` {r per capita}
+boro_pop = read_csv('https://data.cityofnewyork.us/resource/xywu-7bv9.csv') 
+
+boro_pop = select(boro_pop, c('borough','_2000', '_2010', '_2020'))
+
+boro_pop = boro_pop %>%
+  rename('2000' = '_2000',
+         '2010' = '_2010',
+         '2020' = '_2020') %>%
+  mutate(avg = rowMeans(select(boro_pop, !borough)))
+
+  
+```
+The population data is now added to the inci_by_hour tibble so that we can create a per capita column with that data.
+
+``` {r per capita cont}
+inci_by_hour = inci_by_hour %>%
+  mutate(pop = case_when(boro == 'BRONX' ~ boro_pop$avg[2],
+                         boro == 'BROOKLYN' ~ boro_pop$avg[3],
+                         boro == 'MANHATTAN' ~ boro_pop$avg[4],
+                         boro == 'QUEENS' ~ boro_pop$avg[5],
+                         boro == 'STATEN ISLAND' ~ boro_pop$avg[6])) %>%
+  mutate(per_cap = count/pop * 100000) # number of incidents per 100,000 people
+```
+
+Now we can re-do our graphing and modeling to see how much it has changed.
+
+``` {r per capita visual}
+
+preds = data.frame(matrix(ncol = 5, nrow = 24))
+r2 = c(0,0,0,0,0)
+names(preds) = boros
+for (i in 1:5)  {
+data = inci_by_hour[inci_by_hour$boro == boros[i],]
+quad_mod = lm(per_cap ~ hour + 
+                hour2, data=data)
+preds[,i] = predict(quad_mod, inci_by_hour[inci_by_hour$boro==boros[i],])
+r2[i] = summary(quad_mod)$r.squared
+}
+
+preds$hour = c(0:23)
+preds = preds %>%
+  pivot_longer(!hour, names_to = "boro", values_to = "pred")
+
+# incident timing data with model overlay
+ggplot(inci_by_hour, aes(x=hour,y=per_cap, color=boro)) +
+  geom_point() +
+  geom_line(preds, mapping = aes(x = hour, y = pred, color = boro ))
+
+kable(data.frame(boros,r2), digits = 3)
+```
+
+## Session info
+``` {r end, echo=FALSE}
+sessionInfo()
+```
+
+
