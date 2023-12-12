@@ -151,6 +151,8 @@ ggplot(inci_by_hour, aes(x=hour,y=per_cap, color=boro)) +
 kable(data.frame(boros,r2), digits = 3)
 ```
 
+The per capita rates show that the apparent safety of Staten Island in the original analysis was due to the lower population of that borough. Per capita the gun violence rates in Manhattan, Queens, and Staten Island are nearly identical. The curves for the Bronx and Brooklyn switched relative positions between the raw numbers and the per capita analysis. The r squared values did not change, which is expected when transforming data by a constant scale.
+
 ## Session info
 ``` {r end, echo=FALSE}
 sessionInfo()
